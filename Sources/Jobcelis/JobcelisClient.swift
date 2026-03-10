@@ -92,8 +92,14 @@ public class JobcelisClient {
     // MARK: - Webhooks
 
     /// Create a webhook.
-    public func createWebhook(url: String, extra: [String: Any] = [:]) async throws -> [String: Any] {
+    ///
+    /// - Parameters:
+    ///   - url: The webhook endpoint URL.
+    ///   - rateLimit: Optional rate limit with `max_per_second` and/or `max_per_minute`.
+    ///   - extra: Additional fields to include in the request body.
+    public func createWebhook(url: String, rateLimit: [String: Any]? = nil, extra: [String: Any] = [:]) async throws -> [String: Any] {
         var body: [String: Any] = ["url": url]
+        if let rateLimit = rateLimit { body["rate_limit"] = rateLimit }
         for (k, v) in extra { body[k] = v }
         return try await post("/api/v1/webhooks", body: body)
     }
@@ -109,8 +115,15 @@ public class JobcelisClient {
     }
 
     /// Update a webhook.
-    public func updateWebhook(_ webhookId: String, data: [String: Any]) async throws -> [String: Any] {
-        try await patch("/api/v1/webhooks/\(webhookId)", body: data)
+    ///
+    /// - Parameters:
+    ///   - webhookId: The webhook ID.
+    ///   - data: Fields to update.
+    ///   - rateLimit: Optional rate limit with `max_per_second` and/or `max_per_minute`.
+    public func updateWebhook(_ webhookId: String, data: [String: Any], rateLimit: [String: Any]? = nil) async throws -> [String: Any] {
+        var body = data
+        if let rateLimit = rateLimit { body["rate_limit"] = rateLimit }
+        return try await patch("/api/v1/webhooks/\(webhookId)", body: body)
     }
 
     /// Delete a webhook.
@@ -126,6 +139,11 @@ public class JobcelisClient {
     /// List available webhook templates.
     public func webhookTemplates() async throws -> [String: Any] {
         try await get("/api/v1/webhooks/templates")
+    }
+
+    /// Send a test delivery to a webhook.
+    public func testWebhook(_ webhookId: String) async throws -> [String: Any] {
+        try await post("/api/v1/webhooks/\(webhookId)/test", body: [:])
     }
 
     // MARK: - Deliveries
@@ -440,6 +458,45 @@ public class JobcelisClient {
         try await get("/api/v1/audit-log", params: ["limit": "\(limit)", "cursor": cursor])
     }
 
+    // MARK: - Embed Tokens
+
+    /// List embed tokens.
+    public func listEmbedTokens() async throws -> [String: Any] {
+        try await get("/api/v1/embed/tokens")
+    }
+
+    /// Create an embed token.
+    public func createEmbedToken(config: [String: Any]) async throws -> [String: Any] {
+        try await post("/api/v1/embed/tokens", body: config)
+    }
+
+    /// Revoke an embed token.
+    public func revokeEmbedToken(id: String) async throws {
+        try await doDelete("/api/v1/embed/tokens/\(id)")
+    }
+
+    // MARK: - Notification Channels
+
+    /// Get the notification channel configuration.
+    public func getNotificationChannel() async throws -> [String: Any] {
+        try await get("/api/v1/notification-channels")
+    }
+
+    /// Create or update the notification channel configuration.
+    public func upsertNotificationChannel(config: [String: Any]) async throws -> [String: Any] {
+        try await request("PUT", path: "/api/v1/notification-channels", body: config)
+    }
+
+    /// Delete the notification channel configuration.
+    public func deleteNotificationChannel() async throws {
+        try await doDelete("/api/v1/notification-channels")
+    }
+
+    /// Test the notification channel configuration.
+    public func testNotificationChannel() async throws -> [String: Any] {
+        try await post("/api/v1/notification-channels/test", body: [:])
+    }
+
     // MARK: - Export
 
     /// Export events as CSV or JSON. Returns raw string.
@@ -497,6 +554,28 @@ public class JobcelisClient {
     /// Withdraw objection to data processing.
     public func restoreConsent() async throws {
         try await doDelete("/api/v1/me/object")
+    }
+
+    // MARK: - Retention & Purge
+
+    /// Get current retention policy.
+    public func getRetentionPolicy() async throws -> [String: Any] {
+        try await get("/api/v1/retention")
+    }
+
+    /// Update retention policy.
+    public func updateRetentionPolicy(_ policy: [String: Any]) async throws -> [String: Any] {
+        try await patch("/api/v1/retention", body: policy)
+    }
+
+    /// Preview a purge operation.
+    public func previewPurge(_ params: [String: Any]) async throws -> [String: Any] {
+        try await post("/api/v1/purge/preview", body: params)
+    }
+
+    /// Execute a purge operation.
+    public func purgeData(_ params: [String: Any]) async throws -> [String: Any] {
+        try await post("/api/v1/purge", body: params)
     }
 
     // MARK: - Health
