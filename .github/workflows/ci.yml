@@ -11,13 +11,10 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # macOS: the package targets Apple platforms and uses CryptoKit (not on Linux)
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "5.10"
+      - uses: actions/checkout@v7
 
       - name: Build
         run: swift build
