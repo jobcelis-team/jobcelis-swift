@@ -22,7 +22,7 @@ jobs:
     # macOS: the package targets Apple platforms and uses CryptoKit (not on Linux)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
