@@ -24,6 +24,7 @@ https://github.com/jobcelis-team/jobcelis-swift
 
 - Swift 5.9+
 - macOS 13+ / iOS 16+ / tvOS 16+ / watchOS 9+
+- Linux (server-side Swift such as Vapor): uses [swift-crypto](https://github.com/apple/swift-crypto) in place of CryptoKit
 
 ## Quick Start
 

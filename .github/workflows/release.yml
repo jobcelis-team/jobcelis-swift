@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   release:
-    # macOS: the package targets Apple platforms and uses CryptoKit (not on Linux)
+    # Builds on macOS before tagging; ci.yml also checks Linux on every pull request
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7

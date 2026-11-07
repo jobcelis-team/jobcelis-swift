@@ -12,7 +12,17 @@ let package = Package(
     products: [
         .library(name: "Jobcelis", targets: ["Jobcelis"])
     ],
+    dependencies: [
+        // CryptoKit's API for Linux; Apple platforms use CryptoKit itself
+        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"6.0.0")
+    ],
     targets: [
-        .target(name: "Jobcelis")
+        .target(
+            name: "Jobcelis",
+            dependencies: [
+                .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux]))
+            ]
+        ),
+        .testTarget(name: "JobcelisTests", dependencies: ["Jobcelis"])
     ]
 )

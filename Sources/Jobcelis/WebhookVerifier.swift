@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 /// Verify webhook signatures using HMAC-SHA256 (Base64, no padding).
 public enum WebhookVerifier {

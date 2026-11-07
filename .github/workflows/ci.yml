@@ -10,11 +10,20 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    # macOS: the package targets Apple platforms and uses CryptoKit (not on Linux)
+  macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Build
-        run: swift build
+      - name: Build and test
+        run: swift build && swift test
+
+  # Server-side Swift (Vapor, Hummingbird): CryptoKit comes from swift-crypto here
+  linux:
+    runs-on: ubuntu-latest
+    container: swift:6.1
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build and test
+        run: swift build && swift test
