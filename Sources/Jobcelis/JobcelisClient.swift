@@ -11,11 +11,25 @@ import FoundationNetworking
 /// let client = JobcelisClient(apiKey: "your_api_key")
 /// let event = try await client.sendEvent(topic: "order.created", payload: ["order_id": "123"])
 /// ```
+///
+/// Failed requests (network errors and HTTP 429, 502, 503, 504) are retried
+/// automatically, up to ``defaultMaxRetries`` times unless `maxRetries` says otherwise.
 public class JobcelisClient {
+    /// Number of retries used when `maxRetries` is not given. With the default
+    /// backoff (1s, 2s, 4s, 8s, 16s, 30s) it covers about 60 seconds of downtime.
+    public static let defaultMaxRetries = 6
+
     private let apiKey: String
     private let baseURL: String
     private let session: URLSession
     private var authToken: String?
+
+    /// How many times a failed request is retried. `0` disables retries.
+    public let maxRetries: Int
+
+    /// First backoff delay in seconds; it doubles on every retry up to 30 times
+    /// this value. Tests lower it so they do not sleep for real seconds.
+    var retryBaseDelay: TimeInterval = 1
 
     /// Create a new Jobcelis client.
     ///
@@ -23,10 +37,18 @@ public class JobcelisClient {
     ///   - apiKey: Your Jobcelis API key.
     ///   - baseURL: Base URL of the Jobcelis API (default: `https://jobcelis.com`).
     ///   - session: URLSession to use (default: `.shared`).
-    public init(apiKey: String, baseURL: String = "https://jobcelis.com", session: URLSession = .shared) {
+    ///   - maxRetries: How many times a failed request (network error or HTTP 429, 502, 503, 504)
+    ///     is retried (default: 6, about 60 seconds). `0` disables retries.
+    public init(
+        apiKey: String,
+        baseURL: String = "https://jobcelis.com",
+        session: URLSession = .shared,
+        maxRetries: Int = JobcelisClient.defaultMaxRetries
+    ) {
         self.apiKey = apiKey
         self.baseURL = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
         self.session = session
+        self.maxRetries = max(0, maxRetries)
     }
 
     /// Set JWT bearer token for authenticated requests.
@@ -61,13 +83,33 @@ public class JobcelisClient {
     // MARK: - Events
 
     /// Send a single event.
-    public func sendEvent(topic: String, payload: [String: Any]) async throws -> [String: Any] {
-        try await post("/api/v1/events", body: ["topic": topic, "payload": payload])
+    ///
+    /// The request carries an `X-Idempotency-Key` header (`idempotencyKey`, or a random
+    /// UUID when it is `nil`) that stays the same on every retry, so a retried call never
+    /// creates the event twice.
+    public func sendEvent(topic: String, payload: [String: Any], idempotencyKey: String? = nil) async throws -> [String: Any] {
+        let key = idempotencyKey ?? Self.newIdempotencyKey()
+        return try await request(
+            "POST",
+            path: "/api/v1/events",
+            body: ["topic": topic, "payload": payload],
+            headers: [Self.idempotencyKeyHeader: key]
+        )
     }
 
     /// Send up to 1000 events in a batch.
+    ///
+    /// Every event without an `idempotency_key` is sent with a random one, so a retried
+    /// call never creates an event twice.
     public func sendEvents(_ events: [[String: Any]]) async throws -> [String: Any] {
-        try await post("/api/v1/events/batch", body: ["events": events])
+        let events = events.map { event -> [String: Any] in
+            var event = event
+            if event["idempotency_key"] == nil {
+                event["idempotency_key"] = Self.newIdempotencyKey()
+            }
+            return event
+        }
+        return try await post("/api/v1/events/batch", body: ["events": events])
     }
 
     /// Get event details.
@@ -629,7 +671,7 @@ public class JobcelisClient {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
 
         if statusCode >= 400 {
@@ -647,12 +689,18 @@ public class JobcelisClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         return try handleResponse(data: data, response: response)
     }
 
     @discardableResult
-    private func request(_ method: String, path: String, params: [String: String?] = [:], body: [String: Any]? = nil) async throws -> [String: Any] {
+    private func request(
+        _ method: String,
+        path: String,
+        params: [String: String?] = [:],
+        body: [String: Any]? = nil,
+        headers: [String: String] = [:]
+    ) async throws -> [String: Any] {
         let url = buildURL(path, params: params)
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -662,11 +710,14 @@ public class JobcelisClient {
         if let token = authToken {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+        for (field, value) in headers {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
         if let body = body, ["POST", "PATCH", "PUT"].contains(method) {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         return try handleResponse(data: data, response: response)
     }
 
@@ -691,5 +742,89 @@ public class JobcelisClient {
             components.queryItems = filtered.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
         return components.url!
+    }
+
+    // MARK: - Retries
+
+    static let idempotencyKeyHeader = "X-Idempotency-Key"
+
+    /// Sends the request, retrying HTTP 429, 502, 503 and 504 up to `maxRetries` times.
+    /// Network errors are retried only for idempotent requests (any method but POST, or a
+    /// POST with an idempotency key), because the server may already have processed it.
+    private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        let idempotent = request.httpMethod != "POST"
+            || request.value(forHTTPHeaderField: Self.idempotencyKeyHeader) != nil
+        var attempt = 0
+
+        while true {
+            let delay: TimeInterval
+            do {
+                let (data, response) = try await session.data(for: request)
+                let http = response as? HTTPURLResponse
+                let statusCode = http?.statusCode ?? 0
+                guard Self.isRetryableStatus(statusCode), attempt < maxRetries else {
+                    return (data, response)
+                }
+                delay = Self.parseRetryAfter(http?.value(forHTTPHeaderField: "Retry-After"))
+                    ?? backoffDelay(attempt: attempt + 1)
+            } catch {
+                guard idempotent, attempt < maxRetries, Self.isNetworkError(error) else {
+                    throw error
+                }
+                delay = backoffDelay(attempt: attempt + 1)
+            }
+
+            attempt += 1
+            if delay > 0 {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+        }
+    }
+
+    /// Delay before retry number `attempt` (1-based): `retryBaseDelay * 2^(attempt-1)`,
+    /// capped at 30 times the base (30s by default), with +/-20% jitter.
+    func backoffDelay(attempt: Int) -> TimeInterval {
+        let exponent = Double(min(max(attempt - 1, 0), 16))
+        let delay = min(retryBaseDelay * pow(2, exponent), retryBaseDelay * 30)
+        return delay * Double.random(in: 0.8...1.2)
+    }
+
+    static func isRetryableStatus(_ statusCode: Int) -> Bool {
+        [429, 502, 503, 504].contains(statusCode)
+    }
+
+    static func isNetworkError(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .cancelled, .badURL, .unsupportedURL, .userAuthenticationRequired:
+            return false
+        default:
+            return true
+        }
+    }
+
+    /// Parses a `Retry-After` value (seconds or an HTTP date), capped at 60 seconds.
+    static func parseRetryAfter(_ value: String?) -> TimeInterval? {
+        guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else {
+            return nil
+        }
+        let seconds: TimeInterval
+        if let number = TimeInterval(value) {
+            guard number.isFinite else { return nil }
+            seconds = number
+        } else {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(identifier: "GMT")
+            formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+            guard let date = formatter.date(from: value) else { return nil }
+            seconds = date.timeIntervalSinceNow
+        }
+        return min(max(seconds, 0), 60)
+    }
+
+    /// A new random UUID v4, as used for idempotency keys.
+    static func newIdempotencyKey() -> String {
+        UUID().uuidString.lowercased()
     }
 }

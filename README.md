@@ -75,6 +75,9 @@ let result = try await client.verifyMfa(token: accessToken, code: "123456")
 // Send a single event
 let event = try await client.sendEvent(topic: "order.created", payload: ["order_id": "123", "amount": 99.99])
 
+// Send a single event with your own idempotency key
+let event = try await client.sendEvent(topic: "order.created", payload: ["order_id": "123"], idempotencyKey: "order-123-created")
+
 // Send batch events (up to 1000)
 let batch = try await client.sendEvents([
     ["topic": "order.created", "payload": ["order_id": "1"]],
@@ -318,6 +321,22 @@ do {
     print("Error: \(error)")
 }
 ```
+
+## Retries
+
+The client retries failed requests automatically, so a short outage (for example while the API is being deployed) does not lose your events:
+
+- **What is retried:** network errors (connection lost or refused, DNS, TLS, timeouts) and HTTP `429`, `502`, `503` and `504`. Other errors (`400`, `401`, `404`, `422`, `500`, ...) are thrown right away.
+- **POST requests** are retried on `429`/`502`/`503`/`504`, but after a network error only when they carry an idempotency key, because the server may already have processed them.
+- **Events are safe to retry:** `sendEvent` sends an `X-Idempotency-Key` header (your `idempotencyKey`, or a random UUID) that stays the same on every retry, and `sendEvents` gives every event without an `idempotency_key` a random one. A retried call never creates an event twice.
+- **Backoff:** 1s, 2s, 4s, 8s, 16s, then 30s (±20% jitter), or the server's `Retry-After` header (up to 60s). The default of 6 retries covers about 60 seconds. Cancelling the `Task` stops the retries.
+
+```swift
+let client = JobcelisClient(apiKey: "your_api_key", maxRetries: 3) // fewer retries
+let client = JobcelisClient(apiKey: "your_api_key", maxRetries: 0) // no retries
+```
+
+When the last retry fails, the error is the same one a single attempt throws (`JobcelisError` or `URLError`).
 
 ## Webhook Signature Verification
 
