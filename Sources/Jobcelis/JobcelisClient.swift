@@ -22,7 +22,16 @@ public class JobcelisClient {
     private let apiKey: String
     private let baseURL: String
     private let session: URLSession
-    private var authToken: String?
+    private let authLock = NSLock()
+    private var _authToken: String?
+
+    /// JWT bearer token, read and written under a lock so the client can be shared
+    /// between tasks and threads.
+    private var authToken: String? {
+        authLock.lock()
+        defer { authLock.unlock() }
+        return _authToken
+    }
 
     /// How many times a failed request is retried. `0` disables retries.
     public let maxRetries: Int
@@ -53,7 +62,16 @@ public class JobcelisClient {
 
     /// Set JWT bearer token for authenticated requests.
     public func setAuthToken(_ token: String) {
-        authToken = token
+        authLock.lock()
+        _authToken = token
+        authLock.unlock()
+    }
+
+    /// Clear the JWT bearer token.
+    public func clearAuthToken() {
+        authLock.lock()
+        _authToken = nil
+        authLock.unlock()
     }
 
     // MARK: - Auth
@@ -114,7 +132,7 @@ public class JobcelisClient {
 
     /// Get event details.
     public func getEvent(_ eventId: String) async throws -> [String: Any] {
-        try await get("/api/v1/events/\(eventId)")
+        try await get("/api/v1/events/\(seg(eventId))")
     }
 
     /// List events with cursor pagination.
@@ -124,7 +142,7 @@ public class JobcelisClient {
 
     /// Delete an event.
     public func deleteEvent(_ eventId: String) async throws {
-        try await doDelete("/api/v1/events/\(eventId)")
+        try await doDelete("/api/v1/events/\(seg(eventId))")
     }
 
     // MARK: - Simulate
@@ -151,7 +169,7 @@ public class JobcelisClient {
 
     /// Get webhook details.
     public func getWebhook(_ webhookId: String) async throws -> [String: Any] {
-        try await get("/api/v1/webhooks/\(webhookId)")
+        try await get("/api/v1/webhooks/\(seg(webhookId))")
     }
 
     /// List webhooks.
@@ -168,17 +186,17 @@ public class JobcelisClient {
     public func updateWebhook(_ webhookId: String, data: [String: Any], rateLimit: [String: Any]? = nil) async throws -> [String: Any] {
         var body = data
         if let rateLimit = rateLimit { body["rate_limit"] = rateLimit }
-        return try await patch("/api/v1/webhooks/\(webhookId)", body: body)
+        return try await patch("/api/v1/webhooks/\(seg(webhookId))", body: body)
     }
 
     /// Delete a webhook.
     public func deleteWebhook(_ webhookId: String) async throws {
-        try await doDelete("/api/v1/webhooks/\(webhookId)")
+        try await doDelete("/api/v1/webhooks/\(seg(webhookId))")
     }
 
     /// Get health status for a webhook.
     public func webhookHealth(_ webhookId: String) async throws -> [String: Any] {
-        try await get("/api/v1/webhooks/\(webhookId)/health")
+        try await get("/api/v1/webhooks/\(seg(webhookId))/health")
     }
 
     /// List available webhook templates.
@@ -188,7 +206,7 @@ public class JobcelisClient {
 
     /// Send a test delivery to a webhook.
     public func testWebhook(_ webhookId: String) async throws -> [String: Any] {
-        try await post("/api/v1/webhooks/\(webhookId)/test", body: [:])
+        try await post("/api/v1/webhooks/\(seg(webhookId))/test", body: [:])
     }
 
     // MARK: - Deliveries
@@ -200,7 +218,7 @@ public class JobcelisClient {
 
     /// Retry a failed delivery.
     public func retryDelivery(_ deliveryId: String) async throws -> [String: Any] {
-        try await post("/api/v1/deliveries/\(deliveryId)/retry", body: [:])
+        try await post("/api/v1/deliveries/\(seg(deliveryId))/retry", body: [:])
     }
 
     // MARK: - Dead Letters
@@ -212,17 +230,17 @@ public class JobcelisClient {
 
     /// Get dead letter details.
     public func getDeadLetter(_ deadLetterId: String) async throws -> [String: Any] {
-        try await get("/api/v1/dead-letters/\(deadLetterId)")
+        try await get("/api/v1/dead-letters/\(seg(deadLetterId))")
     }
 
     /// Retry a dead letter.
     public func retryDeadLetter(_ deadLetterId: String) async throws -> [String: Any] {
-        try await post("/api/v1/dead-letters/\(deadLetterId)/retry", body: [:])
+        try await post("/api/v1/dead-letters/\(seg(deadLetterId))/retry", body: [:])
     }
 
     /// Mark a dead letter as resolved.
     public func resolveDeadLetter(_ deadLetterId: String) async throws -> [String: Any] {
-        try await patch("/api/v1/dead-letters/\(deadLetterId)/resolve", body: [:])
+        try await patch("/api/v1/dead-letters/\(seg(deadLetterId))/resolve", body: [:])
     }
 
     // MARK: - Replays
@@ -241,12 +259,12 @@ public class JobcelisClient {
 
     /// Get replay details.
     public func getReplay(_ replayId: String) async throws -> [String: Any] {
-        try await get("/api/v1/replays/\(replayId)")
+        try await get("/api/v1/replays/\(seg(replayId))")
     }
 
     /// Cancel a replay.
     public func cancelReplay(_ replayId: String) async throws {
-        try await doDelete("/api/v1/replays/\(replayId)")
+        try await doDelete("/api/v1/replays/\(seg(replayId))")
     }
 
     // MARK: - Jobs
@@ -265,22 +283,22 @@ public class JobcelisClient {
 
     /// Get job details.
     public func getJob(_ jobId: String) async throws -> [String: Any] {
-        try await get("/api/v1/jobs/\(jobId)")
+        try await get("/api/v1/jobs/\(seg(jobId))")
     }
 
     /// Update a scheduled job.
     public func updateJob(_ jobId: String, data: [String: Any]) async throws -> [String: Any] {
-        try await patch("/api/v1/jobs/\(jobId)", body: data)
+        try await patch("/api/v1/jobs/\(seg(jobId))", body: data)
     }
 
     /// Delete a scheduled job.
     public func deleteJob(_ jobId: String) async throws {
-        try await doDelete("/api/v1/jobs/\(jobId)")
+        try await doDelete("/api/v1/jobs/\(seg(jobId))")
     }
 
     /// List runs for a scheduled job.
     public func listJobRuns(_ jobId: String, limit: Int = 50) async throws -> [String: Any] {
-        try await get("/api/v1/jobs/\(jobId)/runs", params: ["limit": "\(limit)"])
+        try await get("/api/v1/jobs/\(seg(jobId))/runs", params: ["limit": "\(limit)"])
     }
 
     /// Preview next occurrences for a cron expression.
@@ -290,9 +308,17 @@ public class JobcelisClient {
 
     // MARK: - Pipelines
 
-    /// Create an event pipeline.
-    public func createPipeline(name: String, topics: [String], steps: [[String: Any]]) async throws -> [String: Any] {
-        try await post("/api/v1/pipelines", body: ["name": name, "topics": topics, "steps": steps])
+    /// Create an event pipeline. The API requires `webhookId`: the webhook that
+    /// receives the events the pipeline lets through.
+    public func createPipeline(
+        name: String,
+        topics: [String],
+        steps: [[String: Any]],
+        webhookId: String? = nil
+    ) async throws -> [String: Any] {
+        var body: [String: Any] = ["name": name, "topics": topics, "steps": steps]
+        if let webhookId = webhookId { body["webhook_id"] = webhookId }
+        return try await post("/api/v1/pipelines", body: body)
     }
 
     /// List pipelines.
@@ -302,22 +328,22 @@ public class JobcelisClient {
 
     /// Get pipeline details.
     public func getPipeline(_ pipelineId: String) async throws -> [String: Any] {
-        try await get("/api/v1/pipelines/\(pipelineId)")
+        try await get("/api/v1/pipelines/\(seg(pipelineId))")
     }
 
     /// Update a pipeline.
     public func updatePipeline(_ pipelineId: String, data: [String: Any]) async throws -> [String: Any] {
-        try await patch("/api/v1/pipelines/\(pipelineId)", body: data)
+        try await patch("/api/v1/pipelines/\(seg(pipelineId))", body: data)
     }
 
     /// Delete a pipeline.
     public func deletePipeline(_ pipelineId: String) async throws {
-        try await doDelete("/api/v1/pipelines/\(pipelineId)")
+        try await doDelete("/api/v1/pipelines/\(seg(pipelineId))")
     }
 
     /// Test a pipeline with a sample payload.
     public func testPipeline(_ pipelineId: String, payload: [String: Any]) async throws -> [String: Any] {
-        try await post("/api/v1/pipelines/\(pipelineId)/test", body: payload)
+        try await post("/api/v1/pipelines/\(seg(pipelineId))/test", body: ["payload": payload])
     }
 
     // MARK: - Event Schemas
@@ -334,17 +360,17 @@ public class JobcelisClient {
 
     /// Get event schema details.
     public func getEventSchema(_ schemaId: String) async throws -> [String: Any] {
-        try await get("/api/v1/event-schemas/\(schemaId)")
+        try await get("/api/v1/event-schemas/\(seg(schemaId))")
     }
 
     /// Update an event schema.
     public func updateEventSchema(_ schemaId: String, data: [String: Any]) async throws -> [String: Any] {
-        try await patch("/api/v1/event-schemas/\(schemaId)", body: data)
+        try await patch("/api/v1/event-schemas/\(seg(schemaId))", body: data)
     }
 
     /// Delete an event schema.
     public func deleteEventSchema(_ schemaId: String) async throws {
-        try await doDelete("/api/v1/event-schemas/\(schemaId)")
+        try await doDelete("/api/v1/event-schemas/\(seg(schemaId))")
     }
 
     /// Validate a payload against the schema for a topic.
@@ -368,12 +394,12 @@ public class JobcelisClient {
 
     /// Delete a sandbox endpoint.
     public func deleteSandboxEndpoint(_ endpointId: String) async throws {
-        try await doDelete("/api/v1/sandbox-endpoints/\(endpointId)")
+        try await doDelete("/api/v1/sandbox-endpoints/\(seg(endpointId))")
     }
 
     /// List requests received by a sandbox endpoint.
     public func listSandboxRequests(_ endpointId: String, limit: Int = 50) async throws -> [String: Any] {
-        try await get("/api/v1/sandbox-endpoints/\(endpointId)/requests", params: ["limit": "\(limit)"])
+        try await get("/api/v1/sandbox-endpoints/\(seg(endpointId))/requests", params: ["limit": "\(limit)"])
     }
 
     // MARK: - Analytics
@@ -448,44 +474,44 @@ public class JobcelisClient {
 
     /// Get project by ID.
     public func getProjectById(_ projectId: String) async throws -> [String: Any] {
-        try await get("/api/v1/projects/\(projectId)")
+        try await get("/api/v1/projects/\(seg(projectId))")
     }
 
     /// Update a project by ID.
     public func updateProjectById(_ projectId: String, data: [String: Any]) async throws -> [String: Any] {
-        try await patch("/api/v1/projects/\(projectId)", body: data)
+        try await patch("/api/v1/projects/\(seg(projectId))", body: data)
     }
 
     /// Delete a project.
     public func deleteProject(_ projectId: String) async throws {
-        try await doDelete("/api/v1/projects/\(projectId)")
+        try await doDelete("/api/v1/projects/\(seg(projectId))")
     }
 
     /// Set a project as the default.
     public func setDefaultProject(_ projectId: String) async throws -> [String: Any] {
-        try await patch("/api/v1/projects/\(projectId)/default", body: [:])
+        try await patch("/api/v1/projects/\(seg(projectId))/default", body: [:])
     }
 
     // MARK: - Teams
 
     /// List members of a project.
     public func listMembers(_ projectId: String) async throws -> [String: Any] {
-        try await get("/api/v1/projects/\(projectId)/members")
+        try await get("/api/v1/projects/\(seg(projectId))/members")
     }
 
     /// Add a member to a project.
-    public func addMember(_ projectId: String, email: String, role: String = "member") async throws -> [String: Any] {
-        try await post("/api/v1/projects/\(projectId)/members", body: ["email": email, "role": role])
+    public func addMember(_ projectId: String, email: String, role: String = "viewer") async throws -> [String: Any] {
+        try await post("/api/v1/projects/\(seg(projectId))/members", body: ["email": email, "role": role])
     }
 
     /// Update a member's role.
     public func updateMember(_ projectId: String, memberId: String, role: String) async throws -> [String: Any] {
-        try await patch("/api/v1/projects/\(projectId)/members/\(memberId)", body: ["role": role])
+        try await patch("/api/v1/projects/\(seg(projectId))/members/\(seg(memberId))", body: ["role": role])
     }
 
     /// Remove a member from a project.
     public func removeMember(_ projectId: String, memberId: String) async throws {
-        try await doDelete("/api/v1/projects/\(projectId)/members/\(memberId)")
+        try await doDelete("/api/v1/projects/\(seg(projectId))/members/\(seg(memberId))")
     }
 
     // MARK: - Invitations
@@ -497,12 +523,12 @@ public class JobcelisClient {
 
     /// Accept an invitation.
     public func acceptInvitation(_ invitationId: String) async throws -> [String: Any] {
-        try await post("/api/v1/invitations/\(invitationId)/accept", body: [:])
+        try await post("/api/v1/invitations/\(seg(invitationId))/accept", body: [:])
     }
 
     /// Reject an invitation.
     public func rejectInvitation(_ invitationId: String) async throws -> [String: Any] {
-        try await post("/api/v1/invitations/\(invitationId)/reject", body: [:])
+        try await post("/api/v1/invitations/\(seg(invitationId))/reject", body: [:])
     }
 
     // MARK: - Audit
@@ -526,7 +552,7 @@ public class JobcelisClient {
 
     /// Revoke an embed token.
     public func revokeEmbedToken(id: String) async throws {
-        try await doDelete("/api/v1/embed/tokens/\(id)")
+        try await doDelete("/api/v1/embed/tokens/\(seg(id))")
     }
 
     // MARK: - Notification Channels
@@ -582,7 +608,7 @@ public class JobcelisClient {
 
     /// Accept consent for a specific purpose.
     public func acceptConsent(_ purpose: String) async throws -> [String: Any] {
-        try await post("/api/v1/me/consents/\(purpose)/accept", body: [:])
+        try await post("/api/v1/me/consents/\(seg(purpose))/accept", body: [:])
     }
 
     /// Export all personal data (GDPR data portability).
@@ -590,9 +616,9 @@ public class JobcelisClient {
         try await get("/api/v1/me/data")
     }
 
-    /// Request restriction of data processing.
-    public func restrictProcessing() async throws -> [String: Any] {
-        try await post("/api/v1/me/restrict", body: [:])
+    /// Request restriction of data processing. The API requires the account password.
+    public func restrictProcessing(password: String) async throws -> [String: Any] {
+        try await post("/api/v1/me/restrict", body: ["password": password])
     }
 
     /// Lift restriction on data processing.
@@ -619,7 +645,7 @@ public class JobcelisClient {
 
     /// Update retention policy.
     public func updateRetentionPolicy(_ policy: [String: Any]) async throws -> [String: Any] {
-        try await patch("/api/v1/retention", body: policy)
+        try await patch("/api/v1/retention", body: ["retention_policy": policy])
     }
 
     /// Preview a purge operation.
@@ -639,9 +665,10 @@ public class JobcelisClient {
         try await get("/health")
     }
 
-    /// Get platform status.
+    /// Get platform status. `/status` is an HTML page, so this reads the JSON
+    /// health endpoint (`status` is "healthy", "degraded" or "unhealthy").
     public func status() async throws -> [String: Any] {
-        try await get("/status")
+        try await get("/health")
     }
 
     // MARK: - Private HTTP helpers
@@ -663,7 +690,7 @@ public class JobcelisClient {
     }
 
     private func getRaw(_ path: String, params: [String: String?] = [:]) async throws -> String {
-        let url = buildURL(path, params: params)
+        let url = try buildURL(path, params: params)
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
@@ -683,7 +710,7 @@ public class JobcelisClient {
     }
 
     private func publicPost(_ path: String, body: [String: Any]) async throws -> [String: Any] {
-        let url = URL(string: "\(baseURL)\(path)")!
+        let url = try buildURL(path, params: [:])
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -701,7 +728,7 @@ public class JobcelisClient {
         body: [String: Any]? = nil,
         headers: [String: String] = [:]
     ) async throws -> [String: Any] {
-        let url = buildURL(path, params: params)
+        let url = try buildURL(path, params: params)
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -735,13 +762,33 @@ public class JobcelisClient {
         return (json as? [String: Any]) ?? [:]
     }
 
-    private func buildURL(_ path: String, params: [String: String?]) -> URL {
-        var components = URLComponents(string: "\(baseURL)\(path)")!
+    /// Builds the request URL. Throws `URLError(.badURL)` instead of crashing when the
+    /// base URL is malformed.
+    private func buildURL(_ path: String, params: [String: String?]) throws -> URL {
+        guard var components = URLComponents(string: "\(baseURL)\(path)") else {
+            throw URLError(.badURL)
+        }
         let filtered = params.compactMapValues { $0 }
         if !filtered.isEmpty {
             components.queryItems = filtered.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
-        return components.url!
+        guard let url = components.url else {
+            throw URLError(.badURL)
+        }
+        return url
+    }
+
+    /// Characters left as they are in a path segment: everything allowed in a URL path except `/`.
+    private static let pathSegmentAllowed: CharacterSet = {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/?#%")
+        return allowed
+    }()
+
+    /// Percent-encodes a value interpolated into a URL path, so IDs containing `/`, `?`
+    /// or spaces cannot change the route.
+    private func seg(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: Self.pathSegmentAllowed) ?? value
     }
 
     // MARK: - Retries
