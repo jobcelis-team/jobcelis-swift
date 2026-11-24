@@ -4,6 +4,11 @@ Official Swift SDK for the [Jobcelis](https://jobcelis.com) Event Infrastructure
 
 All API calls go to `https://jobcelis.com` by default -- you only need your API key to get started.
 
+> **Keep your API key on the server.** The project API key is a secret with full access to
+> your project. Do not embed it in an iOS, macOS, tvOS or watchOS app you distribute: anyone
+> can extract it from the app bundle. Call Jobcelis from your own backend, or give the app a
+> short-lived, scoped embed token (`createEmbedToken`) instead.
+
 ## Installation
 
 Add the package to your `Package.swift`:
@@ -178,7 +183,8 @@ let pipeline = try await client.createPipeline(
     steps: [
         ["type": "filter", "config": ["field": "amount", "gt": 100]],
         ["type": "transform", "config": ["add_field": "priority", "value": "high"]],
-    ]
+    ],
+    webhookId: "wh_abc123" // required by the API: where the pipeline delivers
 )
 
 let pipelines = try await client.listPipelines(limit: 50)
@@ -187,7 +193,7 @@ let updated = try await client.updatePipeline("pipe_abc123", data: ["name": "ord
 try await client.deletePipeline("pipe_abc123")
 
 // Test a pipeline with a sample payload
-let result = try await client.testPipeline("pipe_abc123", payload: ["topic": "order.created", "payload": ["id": "1"]])
+let result = try await client.testPipeline("pipe_abc123", payload: ["id": "1", "amount": 150])
 ```
 
 ## Event Schemas
@@ -296,7 +302,7 @@ let auditCsv = try await client.exportAuditLog(format: "csv")
 let consents = try await client.getConsents()
 let accepted = try await client.acceptConsent("marketing")
 let myData = try await client.exportMyData()
-let restricted = try await client.restrictProcessing()
+let restricted = try await client.restrictProcessing(password: "your_account_password")
 try await client.liftRestriction()
 let objected = try await client.objectToProcessing()
 try await client.restoreConsent()
@@ -306,7 +312,7 @@ try await client.restoreConsent()
 
 ```swift
 let health = try await client.health()
-let status = try await client.status()
+let status = try await client.status() // same JSON as health(): "healthy", "degraded" or "unhealthy"
 ```
 
 ## Error Handling
